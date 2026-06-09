@@ -19,14 +19,20 @@ server.tool(
   "Fetches AWS cloud cost breakdown by service and region for a given time period. Use this to answer questions about overall spend, top spending services, or cost by region.",
   {
     period: z.enum(["last_7_days", "last_30_days", "last_3_months"])
-      .default("last_30_days")
-      .describe("Time period to analyze"),
+      .optional()
+      .describe("Preset time period to analyze"),
+    start_date: z.string()
+      .optional()
+      .describe("Custom start date in YYYY-MM-DD format"),
+    end_date: z.string()
+      .optional()
+      .describe("Custom end date in YYYY-MM-DD format"),
     group_by: z.enum(["service", "region", "both"])
       .default("both")
       .describe("How to group the cost breakdown"),
   },
   async (input) => {
-    const result = getCostSummary(costSummarySchema.parse(input));
+    const result = await getCostSummary(costSummarySchema.parse(input));
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };

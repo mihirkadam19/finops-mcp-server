@@ -18,6 +18,19 @@ export const mockCostData = {
         { region: "eu-west-1", amount: 812.90 },
       ],
     },
+    "2026-06-01": {
+      total: 234,
+      by_service: [
+        { service: "Amazon EC2", amount: 214.20, percentage: 44.4 },
+        { service: "Amazon RDS", amount: 98.50, percentage: 20.3 },
+        { service: "Amazon S3", amount: 43.10, percentage: 8.9 },
+        { service: "AWS Lambda", amount: 32.80, percentage: 6.6 },
+        { service: "Amazon CloudFront", amount: 28.60, percentage: 5.8 },
+        { service: "Amazon ElastiCache", amount: 24.30, percentage: 5.0 },
+        { service: "AWS Data Transfer", amount: 21.95, percentage: 4.4 },
+        { service: "Other Services", amount: 22.00, percentage: 4.6 },
+      ]
+    },
     last_30_days: {
       total: 19240.80,
       by_service: [

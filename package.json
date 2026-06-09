@@ -8,14 +8,23 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
-  "keywords": ["mcp", "finops", "aws", "cost-optimization", "claude"],
+  "keywords": [
+    "mcp",
+    "finops",
+    "aws",
+    "cost-optimization",
+    "claude"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-cost-explorer": "^3.1064.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^17.4.2",
     "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "esbuild": "^0.28.0",
     "ts-node": "^10.9.0",
     "typescript": "^5.0.0"
   }
