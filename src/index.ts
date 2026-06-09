@@ -49,7 +49,7 @@ server.tool(
       .describe("Minimum percentage increase over baseline to flag as anomaly"),
   },
   async (input) => {
-    const result = detectAnomalies(anomalySchema.parse(input));
+    const result = await detectAnomalies(anomalySchema.parse(input));
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
