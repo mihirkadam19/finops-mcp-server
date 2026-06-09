@@ -69,7 +69,7 @@ server.tool(
       .describe("Minimum number of days a resource must be idle to be included"),
   },
   async (input) => {
-    const result = getIdleResources(idleResourcesSchema.parse(input));
+    const result = await getIdleResources(idleResourcesSchema.parse(input));
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
