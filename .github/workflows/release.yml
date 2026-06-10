@@ -28,14 +28,14 @@ jobs:
         run: npm ci
 
       - name: Build with esbuild
-        run: npx esbuild src/index.ts --bundle --platform=node --outdir=dist
+        run: node build.mjs
 
       - name: Set version in package.json
         run: npm pkg set version=${{ github.event.inputs.version }}
 
       - name: Create release archive
         run: |
-          zip -r finops-mcp-server-v${{ github.event.inputs.version }}.zip dist/ package.json README.md
+          zip -r finops-mcp-server-v${{ github.event.inputs.version }}.zip dist/ src/ tsconfig.json package.json README.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
