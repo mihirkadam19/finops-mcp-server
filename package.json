@@ -4,22 +4,22 @@
   "description": "Cloud FinOps Analyst MCP Server - AI-powered AWS cost analysis",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js",
-    "./tools": "./dist/tools/index.js"
+    ".": {
+      "require": "./dist/index.js",
+      "types": "./src/index.ts"
+    },
+    "./tools": {
+      "require": "./dist/tools/index.js",
+      "types": "./src/tools/index.ts"
+    }
   },
   "scripts": {
-  "build": "tsc",
-  "start": "node dist/index.js",
-  "dev": "ts-node src/index.ts",
-  "prepare": "npm run build"
-},
-  "keywords": [
-    "mcp",
-    "finops",
-    "aws",
-    "cost-optimization",
-    "claude"
-  ],
+    "build": "node build.mjs",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "prepare": "npm run build"
+  },
+  "keywords": ["mcp", "finops", "aws", "cost-optimization", "claude"],
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1065.0",
