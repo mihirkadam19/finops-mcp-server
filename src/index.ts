@@ -109,7 +109,7 @@ server.tool(
       .describe("Filter by resource type"),
   },
   async (input) => {
-    const result = getTaggingCompliance(taggingSchema.parse(input));
+    const result = await getTaggingCompliance(taggingSchema.parse(input));
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
