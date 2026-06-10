@@ -76,25 +76,6 @@ server.tool(
   }
 );
 
-// ─── Tool: Get Rightsizing Recommendations ────────────────────────────────────
-server.tool(
-  "get_rightsizing_recommendations",
-  "Analyzes over-provisioned EC2 instances and recommends downsizing to smaller, cheaper instance types based on actual CPU and memory utilization. Use this when asked about optimization, over-provisioning, or instance sizing.",
-  {
-    min_monthly_savings: z.number()
-      .default(50)
-      .describe("Minimum monthly savings in USD to include a recommendation"),
-    confidence: z.enum(["all", "High", "Medium"])
-      .default("all")
-      .describe("Confidence level of the recommendation"),
-  },
-  async (input) => {
-    const result = getRightsizingRecommendations(rightsizingSchema.parse(input));
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
-  }
-);
 
 // ─── Tool: Get Tagging Compliance ─────────────────────────────────────────────
 server.tool(
