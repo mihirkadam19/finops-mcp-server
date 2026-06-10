@@ -19,10 +19,9 @@ import {
   CostExplorerClient,
   GetCostAndUsageCommand,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger.js";
+import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger";
 
 const log = createLogger("idleResources");
-const ceClient = new CostExplorerClient({});
 
 const CPU_IDLE_THRESHOLD = 5;
 const RDS_CONNECTION_IDLE_THRESHOLD = 2;
@@ -32,6 +31,37 @@ const CE_RESOURCE_ID_BATCH_SIZE = 100;
 const EC2_COMPUTE_SERVICE = "Amazon Elastic Compute Cloud - Compute";
 const RDS_SERVICE = "Amazon Relational Database Service";
 const EBS_SERVICE = "Amazon Elastic Compute Cloud - Other";
+
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+}
+
+function createClients(credentials?: AwsCredentials, region?: string) {
+  const credentialConfig = credentials
+    ? {
+        credentials: {
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+        },
+      }
+    : {};
+
+  return {
+    ec2: (r: string) => new EC2Client({ region: r, ...credentialConfig }),
+    rds: (r: string) => new RDSClient({ region: r, ...credentialConfig }),
+    cw: (r: string) => new CloudWatchClient({ region: r, ...credentialConfig }),
+    ce: new CostExplorerClient({
+      region: credentials?.region ?? region ?? "us-east-1",
+      ...credentialConfig,
+    }),
+  };
+}
+
+log.info("idleResources module loaded", {
+  credential_context: getAwsCredentialContext(),
+});
 
 export const idleResourcesSchema = z.object({
   resource_type: z.enum(["all", "ec2", "rds", "ebs"]).default("all"),
@@ -98,7 +128,6 @@ function getCostDateRange(): { Start: string; End: string } {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - COST_LOOKBACK_DAYS);
-
   return {
     Start: start.toISOString().split("T")[0]!,
     End: end.toISOString().split("T")[0]!,
@@ -107,15 +136,13 @@ function getCostDateRange(): { Start: string; End: string } {
 
 async function fetchResourceCosts(
   requestLog: Logger,
+  ceClient: CostExplorerClient,
   resourceIds: string[],
   service: string,
   resourceLabel: string
 ): Promise<Map<string, number>> {
   const costByResource = new Map<string, number>();
-
-  if (resourceIds.length === 0) {
-    return costByResource;
-  }
+  if (resourceIds.length === 0) return costByResource;
 
   const timePeriod = getCostDateRange();
 
@@ -145,18 +172,8 @@ async function fetchResourceCosts(
         Metrics: ["UnblendedCost"],
         Filter: {
           And: [
-            {
-              Dimensions: {
-                Key: "SERVICE",
-                Values: [service],
-              },
-            },
-            {
-              Dimensions: {
-                Key: "RESOURCE_ID",
-                Values: batch,
-              },
-            },
+            { Dimensions: { Key: "SERVICE", Values: [service] } },
+            { Dimensions: { Key: "RESOURCE_ID", Values: batch } },
           ],
         },
         GroupBy: [{ Type: "DIMENSION", Key: "RESOURCE_ID" }],
@@ -169,7 +186,6 @@ async function fetchResourceCosts(
       for (const group of timeResult.Groups ?? []) {
         const resourceId = group.Keys?.[0];
         if (!resourceId) continue;
-
         const amount = parseFloat(group.Metrics?.UnblendedCost?.Amount ?? "0");
         costByResource.set(resourceId, (costByResource.get(resourceId) ?? 0) + amount);
         batchMatchCount += 1;
@@ -181,7 +197,6 @@ async function fetchResourceCosts(
       batch_number: batchNumber,
       duration_ms: durationMs,
       matches_in_batch: batchMatchCount,
-      response_metadata: response.$metadata ?? null,
     });
   }
 
@@ -214,13 +229,16 @@ function enrichWithCosts<T extends { region: string; recommendation: string }>(
   savingsNoun: string,
   getLookupIds: (resource: T) => (string | undefined)[],
   savingsAction: string
-): { instances: (T & {
-  monthly_cost?: string;
-  potential_monthly_savings?: string;
-  potential_annual_savings?: string;
-  cost_unavailable?: boolean;
-  recommendation: string;
-})[]; totalMonthlySavings: number } {
+): {
+  instances: (T & {
+    monthly_cost?: string;
+    potential_monthly_savings?: string;
+    potential_annual_savings?: string;
+    cost_unavailable?: boolean;
+    recommendation: string;
+  })[];
+  totalMonthlySavings: number;
+} {
   let totalMonthlySavings = 0;
   let withCost = 0;
   let withoutCost = 0;
@@ -231,11 +249,6 @@ function enrichWithCosts<T extends { region: string; recommendation: string }>(
 
     if (cost === undefined) {
       withoutCost += 1;
-      requestLog.debug(`No Cost Explorer data for idle ${resourceLabel}`, {
-        lookup_ids: lookupIds,
-        region: resource.region,
-      });
-
       return {
         ...resource,
         cost_unavailable: true,
@@ -245,7 +258,6 @@ function enrichWithCosts<T extends { region: string; recommendation: string }>(
 
     withCost += 1;
     totalMonthlySavings += cost;
-
     const monthlySavings = formatCost(cost);
     const annualSavings = formatCost(cost * 12);
 
@@ -268,8 +280,11 @@ function enrichWithCosts<T extends { region: string; recommendation: string }>(
   return { instances: enriched, totalMonthlySavings };
 }
 
-async function getEnabledRegions(requestLog: Logger): Promise<string[]> {
-  const ec2 = new EC2Client({});
+async function getEnabledRegions(
+  requestLog: Logger,
+  ec2Factory: (region: string) => EC2Client
+): Promise<string[]> {
+  const ec2 = ec2Factory("us-east-1");
   const response = await ec2.send(new DescribeRegionsCommand({ AllRegions: false }));
 
   const regions = (response.Regions ?? [])
@@ -283,6 +298,7 @@ async function getEnabledRegions(requestLog: Logger): Promise<string[]> {
 
 async function getDailyMetricAverages(
   requestLog: Logger,
+  cwClient: CloudWatchClient,
   region: string,
   namespace: string,
   metricName: string,
@@ -294,8 +310,6 @@ async function getDailyMetricAverages(
   const start = new Date();
   start.setDate(end.getDate() - lookbackDays - METRIC_LOOKBACK_BUFFER_DAYS);
 
-  const cw = new CloudWatchClient({ region });
-
   requestLog.debug("Fetching CloudWatch metric", {
     region,
     namespace,
@@ -304,7 +318,7 @@ async function getDailyMetricAverages(
     lookback_days: lookbackDays,
   });
 
-  const response = await cw.send(
+  const response = await cwClient.send(
     new GetMetricStatisticsCommand({
       Namespace: namespace,
       MetricName: metricName,
@@ -333,9 +347,7 @@ function countIdleDaysFromDatapoints(
   datapoints: Datapoint[],
   isIdle: (value: number) => boolean
 ): { idleDays: number; average: number } {
-  if (datapoints.length === 0) {
-    return { idleDays: 0, average: 0 };
-  }
+  if (datapoints.length === 0) return { idleDays: 0, average: 0 };
 
   const values = datapoints.map((d) => d.Average ?? 0);
   const average = values.reduce((sum, v) => sum + v, 0) / values.length;
@@ -347,9 +359,11 @@ function countIdleDaysFromDatapoints(
 async function findIdleEc2InRegion(
   requestLog: Logger,
   region: string,
-  minIdleDays: number
+  minIdleDays: number,
+  ec2Factory: (r: string) => EC2Client,
+  cwFactory: (r: string) => CloudWatchClient
 ): Promise<Ec2IdleResource[]> {
-  const ec2 = new EC2Client({ region });
+  const ec2 = ec2Factory(region);
   const response = await ec2.send(new DescribeInstancesCommand({}));
   const instances: Instance[] = [];
 
@@ -361,45 +375,33 @@ async function findIdleEc2InRegion(
 
   const running = instances.filter((i) => i.State?.Name === "running" && i.InstanceId);
   const idleResources: Ec2IdleResource[] = [];
+  const cw = cwFactory(region);
 
   for (const instance of running) {
     const instanceId = instance.InstanceId!;
     const datapoints = await getDailyMetricAverages(
-      requestLog,
-      region,
-      "AWS/EC2",
-      "CPUUtilization",
-      "InstanceId",
-      instanceId,
-      minIdleDays
+      requestLog, cw, region, "AWS/EC2", "CPUUtilization",
+      "InstanceId", instanceId, minIdleDays
     );
 
     const { idleDays, average } = countIdleDaysFromDatapoints(
-      datapoints,
-      (value) => value < CPU_IDLE_THRESHOLD
+      datapoints, (value) => value < CPU_IDLE_THRESHOLD
     );
 
     if (idleDays < minIdleDays) continue;
 
-    const instanceType = instance.InstanceType ?? "unknown";
-    const name = getTagName(instance.Tags, instanceId);
-
     idleResources.push({
       instance_id: instanceId,
-      name,
-      type: instanceType,
+      name: getTagName(instance.Tags, instanceId),
+      type: instance.InstanceType ?? "unknown",
       region,
       avg_cpu: `${average.toFixed(1)}%`,
       days_idle: idleDays,
-      recommendation: `Stop or terminate — average CPU utilization has been ${average.toFixed(1)}% with ${idleDays} low-utilization days. Review whether this workload can be stopped, rightsized, or replaced with a smaller instance type.`,
+      recommendation: `Stop or terminate — average CPU utilization has been ${average.toFixed(1)}% with ${idleDays} low-utilization days.`,
     });
 
     requestLog.debug("Idle EC2 instance identified", {
-      region,
-      instance_id: instanceId,
-      instance_type: instanceType,
-      idle_days: idleDays,
-      avg_cpu: average,
+      region, instance_id: instanceId, idle_days: idleDays, avg_cpu: average,
     });
   }
 
@@ -409,54 +411,45 @@ async function findIdleEc2InRegion(
 async function findIdleRdsInRegion(
   requestLog: Logger,
   region: string,
-  minIdleDays: number
+  minIdleDays: number,
+  rdsFactory: (r: string) => RDSClient,
+  cwFactory: (r: string) => CloudWatchClient
 ): Promise<RdsIdleResource[]> {
-  const rds = new RDSClient({ region });
+  const rds = rdsFactory(region);
   const response = await rds.send(new DescribeDBInstancesCommand({}));
   const instances = response.DBInstances ?? [];
 
   requestLog.debug("RDS instances listed", { region, instance_count: instances.length });
 
   const idleResources: RdsIdleResource[] = [];
+  const cw = cwFactory(region);
 
   for (const db of instances) {
     if (!db.DBInstanceIdentifier || db.DBInstanceStatus !== "available") continue;
 
     const datapoints = await getDailyMetricAverages(
-      requestLog,
-      region,
-      "AWS/RDS",
-      "DatabaseConnections",
-      "DBInstanceIdentifier",
-      db.DBInstanceIdentifier,
-      minIdleDays
+      requestLog, cw, region, "AWS/RDS", "DatabaseConnections",
+      "DBInstanceIdentifier", db.DBInstanceIdentifier, minIdleDays
     );
 
     const { idleDays, average } = countIdleDaysFromDatapoints(
-      datapoints,
-      (value) => value < RDS_CONNECTION_IDLE_THRESHOLD
+      datapoints, (value) => value < RDS_CONNECTION_IDLE_THRESHOLD
     );
 
     if (idleDays < minIdleDays) continue;
 
-    const instanceClass = db.DBInstanceClass ?? "unknown";
-
     idleResources.push({
       instance_id: db.DbiResourceId ?? db.DBInstanceIdentifier,
       name: db.DBInstanceIdentifier,
-      type: instanceClass,
+      type: db.DBInstanceClass ?? "unknown",
       region,
       avg_connections: Math.round(average * 10) / 10,
       days_idle: idleDays,
-      recommendation: `Downsize or delete — average database connections have been ${average.toFixed(1)} over ${idleDays} days. Consider a smaller instance class, stopping non-production databases, or taking a snapshot and terminating if unused.`,
+      recommendation: `Downsize or delete — average connections ${average.toFixed(1)} over ${idleDays} days.`,
     });
 
     requestLog.debug("Idle RDS instance identified", {
-      region,
-      db_instance: db.DBInstanceIdentifier,
-      instance_class: instanceClass,
-      idle_days: idleDays,
-      avg_connections: average,
+      region, db_instance: db.DBInstanceIdentifier, idle_days: idleDays, avg_connections: average,
     });
   }
 
@@ -466,13 +459,12 @@ async function findIdleRdsInRegion(
 async function findUnattachedEbsInRegion(
   requestLog: Logger,
   region: string,
-  minIdleDays: number
+  minIdleDays: number,
+  ec2Factory: (r: string) => EC2Client
 ): Promise<EbsIdleResource[]> {
-  const ec2 = new EC2Client({ region });
+  const ec2 = ec2Factory(region);
   const response = await ec2.send(
-    new DescribeVolumesCommand({
-      Filters: [{ Name: "status", Values: ["available"] }],
-    })
+    new DescribeVolumesCommand({ Filters: [{ Name: "status", Values: ["available"] }] })
   );
 
   const volumes = response.Volumes ?? [];
@@ -483,27 +475,19 @@ async function findUnattachedEbsInRegion(
 
   for (const volume of volumes) {
     if (!volume.VolumeId) continue;
-
-    const createTime = volume.CreateTime ?? now;
-    const daysUnattached = daysBetween(createTime, now);
-
+    const daysUnattached = daysBetween(volume.CreateTime ?? now, now);
     if (daysUnattached < minIdleDays) continue;
-
-    const sizeGb = volume.Size ?? 0;
 
     idleResources.push({
       volume_id: volume.VolumeId,
-      size: `${sizeGb} GB`,
+      size: `${volume.Size ?? 0} GB`,
       region,
       days_unattached: daysUnattached,
-      recommendation: `Delete or snapshot — volume has been unattached (available) for approximately ${daysUnattached} days (estimated from create time). Create a snapshot if data may be needed, then delete the volume.`,
+      recommendation: `Delete or snapshot — unattached for approximately ${daysUnattached} days.`,
     });
 
     requestLog.debug("Unattached EBS volume identified", {
-      region,
-      volume_id: volume.VolumeId,
-      size_gb: sizeGb,
-      days_unattached: daysUnattached,
+      region, volume_id: volume.VolumeId, days_unattached: daysUnattached,
     });
   }
 
@@ -513,32 +497,24 @@ async function findUnattachedEbsInRegion(
 async function scanRegion(
   requestLog: Logger,
   region: string,
-  input: IdleResourcesInput
-): Promise<{
-  ec2: Ec2IdleResource[];
-  rds: RdsIdleResource[];
-  ebs: EbsIdleResource[];
-}> {
+  input: IdleResourcesInput,
+  clients: ReturnType<typeof createClients>
+): Promise<{ ec2: Ec2IdleResource[]; rds: RdsIdleResource[]; ebs: EbsIdleResource[] }> {
   const regionLog = requestLog.child({ region });
   const startMs = Date.now();
-
   regionLog.info("Scanning region for idle resources");
 
-  const result = {
-    ec2: [] as Ec2IdleResource[],
-    rds: [] as RdsIdleResource[],
-    ebs: [] as EbsIdleResource[],
-  };
+  const result = { ec2: [] as Ec2IdleResource[], rds: [] as RdsIdleResource[], ebs: [] as EbsIdleResource[] };
 
   try {
     if (input.resource_type === "all" || input.resource_type === "ec2") {
-      result.ec2 = await findIdleEc2InRegion(regionLog, region, input.min_idle_days);
+      result.ec2 = await findIdleEc2InRegion(regionLog, region, input.min_idle_days, clients.ec2, clients.cw);
     }
     if (input.resource_type === "all" || input.resource_type === "rds") {
-      result.rds = await findIdleRdsInRegion(regionLog, region, input.min_idle_days);
+      result.rds = await findIdleRdsInRegion(regionLog, region, input.min_idle_days, clients.rds, clients.cw);
     }
     if (input.resource_type === "all" || input.resource_type === "ebs") {
-      result.ebs = await findUnattachedEbsInRegion(regionLog, region, input.min_idle_days);
+      result.ebs = await findUnattachedEbsInRegion(regionLog, region, input.min_idle_days, clients.ec2);
     }
 
     regionLog.info("Region scan complete", {
@@ -566,48 +542,33 @@ function buildActionRequired(
   rdsMonthlySavings?: string,
   ebsMonthlySavings?: string
 ): string {
-  if (resourceCount === 0) {
-    return "No idle resources found above the specified threshold.";
-  }
+  if (resourceCount === 0) return "No idle resources found above the specified threshold.";
 
   const savingsParts: string[] = [];
+  if (ec2Count > 0 && ec2MonthlySavings) savingsParts.push(`${ec2Count} idle EC2 instance(s) could save ${ec2MonthlySavings}/month`);
+  if (rdsCount > 0 && rdsMonthlySavings) savingsParts.push(`${rdsCount} idle RDS instance(s) could save ${rdsMonthlySavings}/month`);
+  if (ebsCount > 0 && ebsMonthlySavings) savingsParts.push(`${ebsCount} unattached EBS volume(s) could save ${ebsMonthlySavings}/month`);
 
-  if (ec2Count > 0 && ec2MonthlySavings) {
-    savingsParts.push(`${ec2Count} idle EC2 instance(s) could save ${ec2MonthlySavings}/month if stopped or terminated`);
-  }
-  if (rdsCount > 0 && rdsMonthlySavings) {
-    savingsParts.push(`${rdsCount} idle RDS instance(s) could save ${rdsMonthlySavings}/month if stopped or terminated`);
-  }
-  if (ebsCount > 0 && ebsMonthlySavings) {
-    savingsParts.push(`${ebsCount} unattached EBS volume(s) could save ${ebsMonthlySavings}/month if deleted`);
-  }
-
-  if (savingsParts.length > 0) {
-    return `You have ${resourceCount} idle resources. ${savingsParts.join("; ")}.`;
-  }
-
-  return `You have ${resourceCount} idle resources above the threshold. Review and remediate to reduce waste.`;
+  return savingsParts.length > 0
+    ? `You have ${resourceCount} idle resources. ${savingsParts.join("; ")}.`
+    : `You have ${resourceCount} idle resources above the threshold.`;
 }
 
-export async function getIdleResources(input: IdleResourcesInput) {
+export async function getIdleResources(input: IdleResourcesInput, credentials?: AwsCredentials) {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const requestLog = log.child({ request_id: requestId });
   const overallStartMs = Date.now();
+  const clients = createClients(credentials);
 
   requestLog.info("getIdleResources invoked", {
-    input: {
-      resource_type: input.resource_type,
-      min_idle_days: input.min_idle_days,
-    },
-    thresholds: {
-      ec2_cpu_percent: CPU_IDLE_THRESHOLD,
-      rds_connections: RDS_CONNECTION_IDLE_THRESHOLD,
-    },
+    input: { resource_type: input.resource_type, min_idle_days: input.min_idle_days },
+    credential_source: credentials ? "explicit" : "env/default",
+    thresholds: { ec2_cpu_percent: CPU_IDLE_THRESHOLD, rds_connections: RDS_CONNECTION_IDLE_THRESHOLD },
     credential_context: getAwsCredentialContext(),
   });
 
   try {
-    const regions = await getEnabledRegions(requestLog);
+    const regions = await getEnabledRegions(requestLog, clients.ec2);
     const allEc2: Ec2IdleResource[] = [];
     const allRds: RdsIdleResource[] = [];
     const allEbs: EbsIdleResource[] = [];
@@ -621,7 +582,7 @@ export async function getIdleResources(input: IdleResourcesInput) {
       });
 
       const batchResults = await Promise.all(
-        batch.map((region) => scanRegion(requestLog, region, input))
+        batch.map((region) => scanRegion(requestLog, region, input, clients))
       );
 
       for (const result of batchResults) {
@@ -640,102 +601,52 @@ export async function getIdleResources(input: IdleResourcesInput) {
 
     if (allEc2.length > 0) {
       const costStartMs = Date.now();
-      const resourceIds = allEc2.map((i) => i.instance_id);
-      const costByResource = await fetchResourceCosts(requestLog, resourceIds, EC2_COMPUTE_SERVICE, "EC2");
-      const { instances, totalMonthlySavings } = enrichWithCosts(
-        requestLog,
-        allEc2,
-        costByResource,
-        "EC2",
-        "EC2 compute",
-        (r) => [r.instance_id, r.name],
-        "Stopping or terminating"
-      );
-
+      const costByResource = await fetchResourceCosts(requestLog, clients.ce, allEc2.map((i) => i.instance_id), EC2_COMPUTE_SERVICE, "EC2");
+      const { instances, totalMonthlySavings } = enrichWithCosts(requestLog, allEc2, costByResource, "EC2", "EC2 compute", (r) => [r.instance_id, r.name], "Stopping or terminating");
       ec2Instances = instances;
       ec2SavingsSummary = {
-        ec2_cost_period: `last ${COST_LOOKBACK_DAYS} days`,
-        ec2_cost_source: `AWS Cost Explorer (UnblendedCost, ${EC2_COMPUTE_SERVICE}, by RESOURCE_ID)`,
         ec2_potential_monthly_savings: formatCost(totalMonthlySavings),
         ec2_potential_annual_savings: formatCost(totalMonthlySavings * 12),
         ec2_instances_with_cost_data: instances.filter((i) => !i.cost_unavailable).length,
         ec2_instances_without_cost_data: instances.filter((i) => i.cost_unavailable).length,
       };
-
-      requestLog.info("EC2 savings calculated", {
-        duration_ms: Date.now() - costStartMs,
-        ...ec2SavingsSummary,
-      });
+      requestLog.info("EC2 savings calculated", { duration_ms: Date.now() - costStartMs, ...ec2SavingsSummary });
     }
 
     if (allRds.length > 0) {
       const costStartMs = Date.now();
-      const resourceIds = allRds.map((i) => i.instance_id);
-      const costByResource = await fetchResourceCosts(requestLog, resourceIds, RDS_SERVICE, "RDS");
-      const { instances, totalMonthlySavings } = enrichWithCosts(
-        requestLog,
-        allRds,
-        costByResource,
-        "RDS",
-        "RDS",
-        (r) => [r.instance_id, r.name],
-        "Stopping or terminating"
-      );
-
+      const costByResource = await fetchResourceCosts(requestLog, clients.ce, allRds.map((i) => i.instance_id), RDS_SERVICE, "RDS");
+      const { instances, totalMonthlySavings } = enrichWithCosts(requestLog, allRds, costByResource, "RDS", "RDS", (r) => [r.instance_id, r.name], "Stopping or terminating");
       rdsInstances = instances;
       rdsSavingsSummary = {
-        rds_cost_period: `last ${COST_LOOKBACK_DAYS} days`,
-        rds_cost_source: `AWS Cost Explorer (UnblendedCost, ${RDS_SERVICE}, by RESOURCE_ID)`,
         rds_potential_monthly_savings: formatCost(totalMonthlySavings),
         rds_potential_annual_savings: formatCost(totalMonthlySavings * 12),
         rds_instances_with_cost_data: instances.filter((i) => !i.cost_unavailable).length,
         rds_instances_without_cost_data: instances.filter((i) => i.cost_unavailable).length,
       };
-
-      requestLog.info("RDS savings calculated", {
-        duration_ms: Date.now() - costStartMs,
-        ...rdsSavingsSummary,
-      });
+      requestLog.info("RDS savings calculated", { duration_ms: Date.now() - costStartMs, ...rdsSavingsSummary });
     }
 
     if (allEbs.length > 0) {
       const costStartMs = Date.now();
-      const resourceIds = allEbs.map((v) => v.volume_id);
-      const costByResource = await fetchResourceCosts(requestLog, resourceIds, EBS_SERVICE, "EBS");
-      const { instances, totalMonthlySavings } = enrichWithCosts(
-        requestLog,
-        allEbs,
-        costByResource,
-        "EBS",
-        "EBS storage",
-        (v) => [v.volume_id],
-        "Deleting the volume"
-      );
-
+      const costByResource = await fetchResourceCosts(requestLog, clients.ce, allEbs.map((v) => v.volume_id), EBS_SERVICE, "EBS");
+      const { instances, totalMonthlySavings } = enrichWithCosts(requestLog, allEbs, costByResource, "EBS", "EBS storage", (v) => [v.volume_id], "Deleting the volume");
       ebsVolumes = instances;
       ebsSavingsSummary = {
-        ebs_cost_period: `last ${COST_LOOKBACK_DAYS} days`,
-        ebs_cost_source: `AWS Cost Explorer (UnblendedCost, ${EBS_SERVICE}, by RESOURCE_ID)`,
         ebs_potential_monthly_savings: formatCost(totalMonthlySavings),
         ebs_potential_annual_savings: formatCost(totalMonthlySavings * 12),
         ebs_volumes_with_cost_data: instances.filter((v) => !v.cost_unavailable).length,
         ebs_volumes_without_cost_data: instances.filter((v) => v.cost_unavailable).length,
       };
-
-      requestLog.info("EBS savings calculated", {
-        duration_ms: Date.now() - costStartMs,
-        ...ebsSavingsSummary,
-      });
+      requestLog.info("EBS savings calculated", { duration_ms: Date.now() - costStartMs, ...ebsSavingsSummary });
     }
 
     const results: Record<string, unknown[]> = {};
-
     if (ec2Instances.length > 0) results.ec2_instances = ec2Instances;
     if (rdsInstances.length > 0) results.rds_instances = rdsInstances;
     if (ebsVolumes.length > 0) results.ebs_volumes = ebsVolumes;
 
-    const resourceCount =
-      ec2Instances.length + rdsInstances.length + ebsVolumes.length;
+    const resourceCount = ec2Instances.length + rdsInstances.length + ebsVolumes.length;
 
     requestLog.info("getIdleResources completed successfully", {
       duration_ms: Date.now() - overallStartMs,
@@ -746,25 +657,24 @@ export async function getIdleResources(input: IdleResourcesInput) {
       ebs_count: ebsVolumes.length,
     });
 
-    const actionRequired = buildActionRequired(
-      resourceCount,
-      ec2Instances.length,
-      rdsInstances.length,
-      ebsVolumes.length,
-      ec2SavingsSummary.ec2_potential_monthly_savings as string | undefined,
-      rdsSavingsSummary.rds_potential_monthly_savings as string | undefined,
-      ebsSavingsSummary.ebs_potential_monthly_savings as string | undefined
-    );
-
     return {
       idle_resources_found: resourceCount,
       regions_scanned: regions.length,
       min_idle_days: input.min_idle_days,
+      credential_source: credentials ? "explicit" : "env/default",
       ...ec2SavingsSummary,
       ...rdsSavingsSummary,
       ...ebsSavingsSummary,
       ...results,
-      action_required: actionRequired,
+      action_required: buildActionRequired(
+        resourceCount,
+        ec2Instances.length,
+        rdsInstances.length,
+        ebsVolumes.length,
+        ec2SavingsSummary.ec2_potential_monthly_savings as string | undefined,
+        rdsSavingsSummary.rds_potential_monthly_savings as string | undefined,
+        ebsSavingsSummary.ebs_potential_monthly_savings as string | undefined
+      ),
     };
   } catch (error) {
     requestLog.error("getIdleResources failed", {

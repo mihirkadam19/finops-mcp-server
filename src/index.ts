@@ -5,7 +5,6 @@ import { z } from "zod";
 import { getCostSummary, costSummarySchema } from "./tools/costSummary.js";
 import { detectAnomalies, anomalySchema } from "./tools/anomalyDetection.js";
 import { getIdleResources, idleResourcesSchema } from "./tools/idleResources.js";
-import { getRightsizingRecommendations, rightsizingSchema } from "./tools/rightsizing.js";
 import { getTaggingCompliance, taggingSchema } from "./tools/taggingCompliance.js";
 
 const server = new McpServer({

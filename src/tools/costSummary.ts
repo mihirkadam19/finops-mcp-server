@@ -4,14 +4,30 @@ import {
   GetCostAndUsageCommand,
   type GroupDefinition,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger.js";
+import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger";
 
 const log = createLogger("costSummary");
 
-const client = new CostExplorerClient({});
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+}
 
-log.info("CostExplorerClient initialized", {
-  client_config: "default (AWS SDK credential provider chain)",
+function createClient(credentials?: AwsCredentials): CostExplorerClient {
+  if (credentials) {
+    return new CostExplorerClient({
+      region: credentials.region ?? "us-east-1",
+      credentials: {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      },
+    });
+  }
+  return new CostExplorerClient({});
+}
+
+log.info("costSummary module loaded", {
   credential_context: getAwsCredentialContext(),
 });
 
@@ -71,7 +87,8 @@ async function fetchCostAndUsage(
   requestLog: ReturnType<typeof createLogger>,
   label: string,
   timePeriod: { Start: string; End: string },
-  groupBy: GroupDefinition[]
+  groupBy: GroupDefinition[],
+  client: CostExplorerClient
 ) {
   const commandInput = {
     TimePeriod: timePeriod,
@@ -120,10 +137,11 @@ async function fetchCostAndUsage(
   return response;
 }
 
-export async function getCostSummary(input: CostSummaryInput) {
+export async function getCostSummary(input: CostSummaryInput, credentials?: AwsCredentials) {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const requestLog = log.child({ request_id: requestId });
   const overallStartMs = Date.now();
+  const client = createClient(credentials);
 
   requestLog.info("getCostSummary invoked", {
     input: {
@@ -132,6 +150,7 @@ export async function getCostSummary(input: CostSummaryInput) {
       end_date: input.end_date ?? null,
       group_by: input.group_by,
     },
+    credential_source: credentials ? "explicit" : "env/default",
     credential_context: getAwsCredentialContext(),
   });
 
@@ -152,7 +171,8 @@ export async function getCostSummary(input: CostSummaryInput) {
         requestLog,
         "by_service",
         timePeriod,
-        serviceGroups
+        serviceGroups,
+        client
       );
 
       let total = 0;
@@ -223,7 +243,8 @@ export async function getCostSummary(input: CostSummaryInput) {
         requestLog,
         "by_region",
         timePeriod,
-        regionGroups
+        regionGroups,
+        client
       );
 
       const regionMap: Record<string, number> = {};

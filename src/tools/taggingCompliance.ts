@@ -4,14 +4,32 @@ import {
   GetResourcesCommand,
   type ResourceTagMapping,
 } from "@aws-sdk/client-resource-groups-tagging-api";
-import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger.js";
+import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger";
 
 const log = createLogger("taggingCompliance");
-const taggingClient = new ResourceGroupsTaggingAPIClient({});
 
-log.info("ResourceGroupsTaggingAPIClient initialized", {
+log.info("taggingCompliance module loaded", {
   credential_context: getAwsCredentialContext(),
 });
+
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+}
+
+function createClient(credentials?: AwsCredentials): ResourceGroupsTaggingAPIClient {
+  if (credentials) {
+    return new ResourceGroupsTaggingAPIClient({
+      region: credentials.region ?? "us-east-1",
+      credentials: {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      },
+    });
+  }
+  return new ResourceGroupsTaggingAPIClient({});
+}
 
 const REQUIRED_TAGS = ["Environment", "Owner", "CostCenter", "Project"];
 
@@ -68,12 +86,14 @@ function buildTagMap(resource: ResourceTagMapping): Record<string, string> {
   return map;
 }
 
-export async function getTaggingCompliance(input: TaggingInput) {
+export async function getTaggingCompliance(input: TaggingInput, credentials?: AwsCredentials) {
   const requestLog = log.child({ request_id: `req_${Date.now()}` });
   const startMs = Date.now();
+  const taggingClient = createClient(credentials);
 
   requestLog.info("getTaggingCompliance invoked", {
     input,
+    credential_source: credentials ? "explicit" : "env/default",
     credential_context: getAwsCredentialContext(),
   });
 
@@ -81,7 +101,6 @@ export async function getTaggingCompliance(input: TaggingInput) {
     const resourceTypeFilters =
       input.resource_type !== "all" ? RESOURCE_TYPE_FILTERS[input.resource_type] : undefined;
 
-    // Paginate through all resources
     const allResources: ResourceTagMapping[] = [];
     let paginationToken: string | undefined;
     let page = 0;
@@ -114,7 +133,6 @@ export async function getTaggingCompliance(input: TaggingInput) {
       duration_ms: Date.now() - startMs,
     });
 
-    // Evaluate each resource for tag compliance
     type Violation = {
       resource_id: string;
       resource_type: string;
@@ -179,6 +197,7 @@ export async function getTaggingCompliance(input: TaggingInput) {
       non_compliant: nonCompliantCount,
       required_tags: REQUIRED_TAGS,
       violations_found: violations.length,
+      credential_source: credentials ? "explicit" : "env/default",
       violations: violations.map((v) => ({
         resource_id: v.resource_id,
         resource_type: v.resource_type,

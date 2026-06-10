@@ -4,16 +4,32 @@ import {
   GetAnomaliesCommand,
   type Anomaly,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger.js";
+import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger";
 
 const log = createLogger("anomalyDetection");
 
-const client = new CostExplorerClient({});
-
-log.info("CostExplorerClient initialized", {
-  client_config: "default (AWS SDK credential provider chain)",
+log.info("anomalyDetection module loaded", {
   credential_context: getAwsCredentialContext(),
 });
+
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+}
+
+function createClient(credentials?: AwsCredentials): CostExplorerClient {
+  if (credentials) {
+    return new CostExplorerClient({
+      region: credentials.region ?? "us-east-1",
+      credentials: {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      },
+    });
+  }
+  return new CostExplorerClient({});
+}
 
 export const anomalySchema = z.object({
   min_spike_percentage: z.number().default(50),
@@ -123,7 +139,6 @@ function buildLikelyCause(anomaly: Anomaly, requestLog: Logger): string {
   });
 
   const detail = parts.length > 0 ? parts.join(", ") : "one or more linked dimensions";
-
   return `Unusual spend detected for ${detail}. Review recent deployments, scaling events, or configuration changes in this area.`;
 }
 
@@ -200,7 +215,8 @@ function mapAnomaly(anomaly: Anomaly, requestLog: Logger): MappedAnomaly {
 
 async function fetchAllAnomalies(
   requestLog: Logger,
-  dateInterval: { StartDate: string; EndDate: string }
+  dateInterval: { StartDate: string; EndDate: string },
+  client: CostExplorerClient
 ): Promise<Anomaly[]> {
   const anomalies: Anomaly[] = [];
   let nextPageToken: string | undefined;
@@ -310,13 +326,15 @@ function logFilterResults(
   }
 }
 
-export async function detectAnomalies(input: AnomalyInput) {
+export async function detectAnomalies(input: AnomalyInput, credentials?: AwsCredentials) {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const requestLog = log.child({ request_id: requestId });
   const overallStartMs = Date.now();
+  const client = createClient(credentials);
 
   requestLog.info("detectAnomalies invoked", {
     input: { min_spike_percentage: input.min_spike_percentage },
+    credential_source: credentials ? "explicit" : "env/default",
     credential_context: getAwsCredentialContext(),
   });
 
@@ -324,7 +342,7 @@ export async function detectAnomalies(input: AnomalyInput) {
     const dateInterval = getDateRange(requestLog);
 
     const fetchStartMs = Date.now();
-    const rawAnomalies = await fetchAllAnomalies(requestLog, dateInterval);
+    const rawAnomalies = await fetchAllAnomalies(requestLog, dateInterval, client);
     const fetchDurationMs = Date.now() - fetchStartMs;
 
     requestLog.info("Raw anomalies fetched", {
