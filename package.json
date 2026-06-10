@@ -8,10 +8,11 @@
     "./tools": "./dist/tools/index.js"
   },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
-  },
+  "build": "tsc",
+  "start": "node dist/index.js",
+  "dev": "ts-node src/index.ts",
+  "prepare": "npm run build"
+},
   "keywords": [
     "mcp",
     "finops",
