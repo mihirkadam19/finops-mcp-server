@@ -1,6 +1,6 @@
 {
   "name": "finops-mcp-server",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Cloud FinOps Analyst MCP Server - AI-powered AWS cost analysis",
   "main": "dist/index.js",
   "exports": {
@@ -19,7 +19,13 @@
     "dev": "ts-node src/index.ts",
     "prepare": "npm run build"
   },
-  "keywords": ["mcp", "finops", "aws", "cost-optimization", "claude"],
+  "keywords": [
+    "mcp",
+    "finops",
+    "aws",
+    "cost-optimization",
+    "claude"
+  ],
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1065.0",
@@ -27,6 +33,13 @@
     "@aws-sdk/client-ec2": "^3.1065.0",
     "@aws-sdk/client-rds": "^3.1065.0",
     "@aws-sdk/client-resource-groups-tagging-api": "^3.1065.0",
+    "@azure/arm-compute": "^24.0.0",
+    "@azure/arm-costmanagement": "^1.0.0-beta.1",
+    "@azure/arm-monitor": "^7.0.0",
+    "@azure/arm-mysql-flexible": "^3.1.0",
+    "@azure/arm-postgresql-flexible": "^9.0.0",
+    "@azure/arm-sql": "^10.0.0",
+    "@azure/identity": "^4.13.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^17.4.2",
     "zod": "^3.22.0"

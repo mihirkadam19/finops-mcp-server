@@ -27,10 +27,13 @@ await esbuild.build({
 await esbuild.build({
   entryPoints: [
     "src/tools/index.ts",
-    "src/tools/costSummary.ts",
-    "src/tools/anomalyDetection.ts",
-    "src/tools/idleResources.ts",
-    "src/tools/taggingCompliance.ts",
+    "src/tools/aws/awsCostSummary.ts",
+    "src/tools/aws/awsAnomalyDetection.ts",
+    "src/tools/aws/awsIdleResources.ts",
+    "src/tools/aws/awsTaggingCompliance.ts",
+    "src/tools/azure/azureCostSummary.ts",
+    "src/tools/azure/azureIdleResources.ts",
+    "src/tools/azure/azureAnomalyDetection.ts",
   ],
   bundle: false,
   platform: "node",

@@ -4,7 +4,7 @@ import {
   GetResourcesCommand,
   type ResourceTagMapping,
 } from "@aws-sdk/client-resource-groups-tagging-api";
-import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger";
+import { createLogger, getAwsCredentialContext, serializeError } from "../../utils/fileLogger";
 
 const log = createLogger("taggingCompliance");
 

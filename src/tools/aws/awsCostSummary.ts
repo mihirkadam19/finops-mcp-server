@@ -4,7 +4,7 @@ import {
   GetCostAndUsageCommand,
   type GroupDefinition,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError } from "../utils/fileLogger";
+import { createLogger, getAwsCredentialContext, serializeError } from "../../utils/fileLogger";
 
 const log = createLogger("costSummary");
 

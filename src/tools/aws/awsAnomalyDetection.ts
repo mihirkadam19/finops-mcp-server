@@ -4,7 +4,7 @@ import {
   GetAnomaliesCommand,
   type Anomaly,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger";
+import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../../utils/fileLogger";
 
 const log = createLogger("anomalyDetection");
 

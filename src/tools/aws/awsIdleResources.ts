@@ -19,7 +19,7 @@ import {
   CostExplorerClient,
   GetCostAndUsageCommand,
 } from "@aws-sdk/client-cost-explorer";
-import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../utils/fileLogger";
+import { createLogger, getAwsCredentialContext, serializeError, type Logger } from "../../utils/fileLogger.js";
 
 const log = createLogger("idleResources");
 
@@ -249,6 +249,11 @@ function enrichWithCosts<T extends { region: string; recommendation: string }>(
 
     if (cost === undefined) {
       withoutCost += 1;
+      requestLog.debug(`No Cost Explorer data for idle ${resourceLabel}`, {
+        lookup_ids: lookupIds,
+        region: resource.region,
+      });
+
       return {
         ...resource,
         cost_unavailable: true,
