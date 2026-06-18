@@ -1,6 +1,6 @@
 {
   "name": "finops-mcp-server",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Cloud FinOps Analyst MCP Server - AI-powered AWS cost analysis",
   "main": "dist/index.js",
   "exports": {
@@ -9,6 +9,7 @@
       "types": "./src/index.ts"
     },
     "./tools": {
+      "import": "./dist/tools/index.js",
       "require": "./dist/tools/index.js",
       "types": "./src/tools/index.ts"
     }
