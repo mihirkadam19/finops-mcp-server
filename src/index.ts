@@ -11,6 +11,7 @@ import { getTaggingCompliance, taggingSchema } from "./tools/aws/awsTaggingCompl
 import { getAzureCostSummary, azureCostSummarySchema } from "./tools/azure/azureCostSummary.js";
 import { getAzureIdleResources, azureIdleResourcesSchema } from "./tools/azure/azureIdleResources.js";
 import { detectAzureAnomalies, azureAnomalySchema } from "./tools/azure/azureAnomalyDetection.js";
+import { getGcpCostSummary, gcpCostSummarySchema } from "./tools/gcp/gcpCostSummary.js";
 
 const server = new McpServer({
   name: "finops-analyst",
@@ -124,6 +125,49 @@ server.tool(
     }
 
     const result = await detectAzureAnomalies(azureAnomalySchema.parse(input), credentials);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// ─── Tool: Get GCP Cost Summary ────────────────────────────────────────────────
+server.tool(
+  "get_gcp_cost_summary",
+  "Fetches GCP cost breakdown by service and project from BigQuery billing export for a given time period. Use this to answer questions about overall GCP spend, top spending services, or cost by project.",
+  {
+    period: z.enum(["last_7_days", "last_30_days", "last_3_months"])
+      .default("last_30_days")
+      .describe("Time period to analyze"),
+    group_by: z.enum(["service", "project", "both"])
+      .default("both")
+      .describe("How to group the cost breakdown"),
+  },
+  async (input) => {
+    const credentials = {
+      projectId: process.env.GCP_PROJECT_ID ?? "",
+      billingDataset: process.env.GCP_BILLING_DATASET ?? "",
+      billingTable: process.env.GCP_BILLING_TABLE ?? "",
+      datasetProjectId: process.env.GCP_BILLING_DATASET_PROJECT,
+      clientEmail: process.env.GCP_CLIENT_EMAIL,
+      privateKey: process.env.GCP_PRIVATE_KEY,
+      impersonateServiceAccount: process.env.GCP_IMPERSONATE_SERVICE_ACCOUNT,
+    };
+
+    if (!credentials.projectId || !credentials.billingDataset || !credentials.billingTable) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            error: true,
+            message: "GCP billing configuration not set.",
+            hint: "Set GCP_PROJECT_ID, GCP_BILLING_DATASET, and GCP_BILLING_TABLE in Claude Desktop config env. Optionally set GOOGLE_APPLICATION_CREDENTIALS for auth or GCP_KEY_FILE for a service account key path.",
+          }),
+        }],
+      };
+    }
+
+    const result = await getGcpCostSummary(gcpCostSummarySchema.parse(input), credentials);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };

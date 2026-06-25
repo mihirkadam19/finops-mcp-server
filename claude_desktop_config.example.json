@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "finops-analyst": {
+      "command": "node",
+      "args": ["/absolute/path/to/finops-mcp-server/dist/index.js"],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "your_aws_access_key_id",
+        "AWS_SECRET_ACCESS_KEY": "your_aws_secret_access_key",
+        "AWS_REGION": "us-east-1",
+        "AZURE_TENANT_ID": "your_azure_tenant_id",
+        "AZURE_CLIENT_ID": "your_azure_client_id",
+        "AZURE_CLIENT_SECRET": "your_azure_client_secret",
+        "AZURE_SUBSCRIPTION_ID": "your_azure_subscription_id",
+        "GCP_PROJECT_ID": "your_gcp_project_id",
+        "GCP_BILLING_DATASET": "your_bigquery_billing_dataset",
+        "GCP_BILLING_TABLE": "gcp_billing_export_v1_XXXXXX_XXXXXX_XXXXXX",
+
+        "GCP_CLIENT_EMAIL": "your-service-account@your-project.iam.gserviceaccount.com",
+        "GCP_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END RSA PRIVATE KEY-----",
+
+        "GCP_IMPERSONATE_SERVICE_ACCOUNT": "your-service-account@your-project.iam.gserviceaccount.com"
+      }
+    }
+  }
+}
