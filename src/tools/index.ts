@@ -8,3 +8,4 @@ export { getAzureIdleResources, azureIdleResourcesSchema, type AzureIdleResource
 export { detectAzureAnomalies, azureAnomalySchema, type AzureAnomalyInput } from "./azure/azureAnomalyDetection";
 export { getGcpCostSummary, gcpCostSummarySchema, type GcpCostSummaryInput, type GcpCredentials } from "./gcp/gcpCostSummary";
 export { getGcpIdleResources, gcpIdleResourcesSchema, type GcpIdleResourcesInput } from "./gcp/gcpIdleResources";
+export { detectGcpAnomalies, gcpAnomalySchema, type GcpAnomalyInput } from "./gcp/gcpAnomalyDetection";

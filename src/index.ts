@@ -13,6 +13,7 @@ import { getAzureIdleResources, azureIdleResourcesSchema } from "./tools/azure/a
 import { detectAzureAnomalies, azureAnomalySchema } from "./tools/azure/azureAnomalyDetection.js";
 import { getGcpCostSummary, gcpCostSummarySchema } from "./tools/gcp/gcpCostSummary.js";
 import { getGcpIdleResources, gcpIdleResourcesSchema } from "./tools/gcp/gcpIdleResources.js";
+import { detectGcpAnomalies, gcpAnomalySchema } from "./tools/gcp/gcpAnomalyDetection.js";
 
 const server = new McpServer({
   name: "finops-analyst",
@@ -169,6 +170,49 @@ server.tool(
     }
 
     const result = await getGcpCostSummary(gcpCostSummarySchema.parse(input), credentials);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// ─── Tool: Detect GCP Cost Anomalies ───────────────────────────────────────────
+server.tool(
+  "detect_gcp_cost_anomalies",
+  "Detects daily GCP cost spikes by comparing each day's spend against the period average, with a per-service breakdown for anomaly days.",
+  {
+    lookback_days: z.number()
+      .default(30)
+      .describe("Number of days of cost history to analyze"),
+    min_spike_percentage: z.number()
+      .default(50)
+      .describe("Minimum % above average daily cost to flag as an anomaly"),
+  },
+  async (input) => {
+    const credentials = {
+      projectId: process.env.GCP_PROJECT_ID ?? "",
+      billingDataset: process.env.GCP_BILLING_DATASET ?? "",
+      billingTable: process.env.GCP_BILLING_TABLE ?? "",
+      datasetProjectId: process.env.GCP_BILLING_DATASET_PROJECT,
+      clientEmail: process.env.GCP_CLIENT_EMAIL,
+      privateKey: process.env.GCP_PRIVATE_KEY,
+      impersonateServiceAccount: process.env.GCP_IMPERSONATE_SERVICE_ACCOUNT,
+    };
+
+    if (!credentials.projectId || !credentials.billingDataset || !credentials.billingTable) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            error: true,
+            message: "GCP billing configuration not set.",
+            hint: "Set GCP_PROJECT_ID, GCP_BILLING_DATASET, and GCP_BILLING_TABLE in Claude Desktop config env.",
+          }),
+        }],
+      };
+    }
+
+    const result = await detectGcpAnomalies(gcpAnomalySchema.parse(input), credentials);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
