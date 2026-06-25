@@ -12,6 +12,7 @@ import { getAzureCostSummary, azureCostSummarySchema } from "./tools/azure/azure
 import { getAzureIdleResources, azureIdleResourcesSchema } from "./tools/azure/azureIdleResources.js";
 import { detectAzureAnomalies, azureAnomalySchema } from "./tools/azure/azureAnomalyDetection.js";
 import { getGcpCostSummary, gcpCostSummarySchema } from "./tools/gcp/gcpCostSummary.js";
+import { getGcpIdleResources, gcpIdleResourcesSchema } from "./tools/gcp/gcpIdleResources.js";
 
 const server = new McpServer({
   name: "finops-analyst",
@@ -168,6 +169,52 @@ server.tool(
     }
 
     const result = await getGcpCostSummary(gcpCostSummarySchema.parse(input), credentials);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// ─── Tool: Get GCP Idle Resources ──────────────────────────────────────────────
+server.tool(
+  "get_gcp_idle_resources",
+  "Identifies idle GCP Compute Engine VMs (low CPU) and unattached Persistent Disks that are wasting money.",
+  {
+    resource_type: z.enum(["all", "compute", "disk"])
+      .default("all")
+      .describe("Type of resource to scan"),
+    min_idle_days: z.number()
+      .default(7)
+      .describe("Number of days of low CPU usage to flag a VM as idle"),
+    cpu_threshold_percent: z.number()
+      .default(5)
+      .describe("Average CPU% below which a VM is considered idle"),
+  },
+  async (input) => {
+    const credentials = {
+      projectId: process.env.GCP_PROJECT_ID ?? "",
+      billingDataset: process.env.GCP_BILLING_DATASET ?? "",
+      billingTable: process.env.GCP_BILLING_TABLE ?? "",
+      datasetProjectId: process.env.GCP_BILLING_DATASET_PROJECT,
+      clientEmail: process.env.GCP_CLIENT_EMAIL,
+      privateKey: process.env.GCP_PRIVATE_KEY,
+      impersonateServiceAccount: process.env.GCP_IMPERSONATE_SERVICE_ACCOUNT,
+    };
+
+    if (!credentials.projectId) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            error: true,
+            message: "GCP project not configured.",
+            hint: "Set GCP_PROJECT_ID in Claude Desktop config env.",
+          }),
+        }],
+      };
+    }
+
+    const result = await getGcpIdleResources(gcpIdleResourcesSchema.parse(input), credentials);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
